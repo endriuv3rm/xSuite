@@ -1,0 +1,154 @@
+local Service = setmetatable({},{__index = function(_, x) return game:GetService(x); end;})
+local __ENV, __INDEX = getgenv(), {{'table', 'function', 'string'}};
+local ins, find, form = table.insert, table.find, string.format; for i, __type in next, {'number', 'boolean'} do
+    ins(__INDEX, {__type, unpack(__INDEX[i])});
+end;
+
+local output = { normal = {'number','table'}; table = {'number', 'table'}; };
+local setup = { anti_break = false; };
+__ENV.__cache = __ENV.__cache or {};
+
+local serialize = function(...)
+    for i, __info in next, {...} do
+        local level = __info[2] or #__INDEX;
+        local indexed = __INDEX[level];
+        local __type = type(__info[1]);
+        if not find(indexed, __type) then
+            return false, warn(form('Invalid value [level %s] expected {%s}, got %s.', level, table.concat(indexed, ','), __type))
+        end;
+    end;
+    return true;
+end;
+
+local parse = function(r, ...)
+    local f, t, s = ...;
+    for i, str in next, f(t) do
+        if type(s) == 'string' and type(str) == 'string' then
+            if str:lower():match(s:lower()) and not find(r, t) then
+                ins(r, t);
+            end;
+        elseif type(s) == 'number' and type(str) == 'number' and str == s then
+            ins(r, t);
+        end;
+    end;
+end;
+
+local is_roblox_script = function(f)
+    local script = getfenv(f).script;
+    if script and (script.RobloxLocked or script:IsDescendantOf(Service.Chat) or script.Name == 'FreecamScript') then
+        return true;
+    end;
+    return false;
+end;
+
+__ENV.__find = function(s,...)
+	local r = {};
+    for _, func in next, getgc() do
+        if type(func) == 'function' and islclosure(func) and not is_synapse_function(func) and not is_roblox_script(func) then
+            for _, f in next, {'getupvalues','getconstants'} do
+                parse(r, __ENV[f], func, s);
+            end;
+        end;
+    end;
+	return r,...;
+end;
+
+local __tinfo = {u={'getupvalues','setupvalue','UPV'},c={'getconstants','setconstant','CONST'}};
+for _, y in next, __tinfo do
+    __tinfo[y[1]] = y;
+end;
+
+__ENV.dump = function(...)
+	local x, p = __find(...);
+	local warn = p == false and function() end or warn;
+	if type(x) ~= 'table' or #x == 0 then 
+		return warn'[ERROR] No functions have been returned.'
+	end;
+	warn(('====> [INIT] Found %s functions! <====\n'):format(#x));
+
+    local cache, tables, r = {}, {}, {};
+    local __minfo = type(p) == 'string' and {__tinfo[p]} or {__tinfo.u,__tinfo.c};
+    for _, y in next, x do
+        for _, __m in next, __minfo do
+            local upv = __ENV[__m[1]](y);
+            for __n, __v in next, upv do
+                if not find(cache, __v) then
+                    ins(cache, __v);
+                    if type(__v) == 'number' and find(output.normal, 'number') then
+                        print(form('[%s][NUM %s]', __m[3], __n), __v);
+                        ins(r, {__n,__v});
+                    elseif type(__v) == 'table' then
+                        local table_name = tostring(__v);
+                        if not find(tables, table_name) then
+                            ins(tables, table_name);
+                            ins(r, __v);
+                        end;
+                        for __n, __v in next, __v do
+                            if find(output.table, type(__v)) then
+                                warn(form('[%s][TABLE %s]', #tables), __m[3], tostring(__n), tostring(__v));
+                            end;
+                        end;
+                    end;
+                end;
+            end;
+        end;
+    end;
+    return r;
+end;
+
+__ENV.xSuite = function(...)
+    local p, entry, index, new_val, changed = ...;
+    if not serialize({entry}) then
+        return;
+    end;
+
+    local funcs = type(entry) == 'function' and {entry} or __find(entry)
+    local __minfo = __tinfo[p];
+    if #funcs > 0 then
+        for _, func in next, funcs do
+            local upv = __ENV[__minfo[1]](func);
+            for __n, __v in next, upv do
+                if type(__v) == 'table' and rawget(__v, tostring(index)) then
+                    local v = __v[index];
+                    if setup.anti_break and type(v) ~= type(new_val) then
+                        return warn(form('[ERROR :: anti_break = true] Attempt to change [%s] in [%s], type values must be the same!', type(v), type(new_val)))
+                    end;
+                    if not rawequal(__v[index], new_val) then
+                        if changed then
+                            __v[index] = nil;
+                            setmetatable(__v, {
+                                __newindex = function(self, i, v)
+                                    if i == index then
+                                        if type(changed) == 'function' then
+                                            changed(i, v);
+                                        end;
+                                    else
+                                        rawset(self, i, v);
+                                    end;
+                                end;
+                                __index = function(self, v)
+                                    if v == index then
+                                        return new_val;
+                                    end;
+                                end;
+                            });
+                        end;
+                        __v[index] = new_val;
+                        warn(form('[SUCCESS-%sTABLE :: %s] %s changed in %s', changed and 'LOOPING-' or '', tostring(index), v, tostring(new_val)));
+                    end;
+                elseif type(__v) == 'number' and rawequal(__n, index) and not rawequal(__v, new_val) then
+                    if setup.anti_break and type(__v) ~= type(new_val) then
+                        return warn(form('[ERROR :: anti_break = true] Attempt to change [%s] in [%s], type values must be the same!', type(v), type(new_val)))
+                    end;
+                    __ENV[__minfo[2]](func, __n, new_val);
+                    warn(form('[SUCCESS-NUMBER :: %s] %s changed in %s', tostring(index), __v, tostring(new_val)));
+                end;
+            end;
+        end;
+        __ENV.__cache[entry] = funcs;
+    else
+        return warn(string.format('[ERROR] Could not find %s.', __minfo[3]));
+    end;
+end;
+
+xSuite('c','force',12,math.huge)
